@@ -1,0 +1,248 @@
+# TRILIUM SYNCHRONIZATION SYSTEM - COMPREHENSIVE EXPLORATION COMPLETE
+
+## Analysis Document
+Full analysis saved to: /home/user/Trilium/SYNC_SYSTEM_ANALYSIS.md (1103 lines)
+
+## Source Files Analyzed
+
+### Core Sync Services
+1. /home/user/Trilium/apps/server/src/services/sync.ts (466 lines)
+   - Main sync orchestration: login, push, pull, conflict resolution
+   - State management: lastSyncedPull, lastSyncedPush
+   - Dual-push architecture implementation
+
+2. /home/user/Trilium/apps/server/src/services/sync_update.ts (171 lines)
+   - Entity update logic with conflict resolution
+   - Timestamp-based winner determination
+   - Note reordering and entity erasure
+
+3. /home/user/Trilium/apps/server/src/services/entity_changes.ts (209 lines)
+   - Entity change tracking and recording
+   - Hash calculation: generateHash(), calculateContentHash()
+   - Change identification: changeId, componentId, instanceId
+
+4. /home/user/Trilium/apps/server/src/services/sync_options.ts (35 lines)
+   - Sync configuration management
+   - Override mechanism via config.ini
+
+5. /home/user/Trilium/apps/server/src/services/sync_mutex.ts (22 lines)
+   - Sync exclusivity guarantee (async-mutex)
+   - Prevents concurrent sync operations
+
+6. /home/user/Trilium/apps/server/src/services/content_hash.ts (92 lines)
+   - Sector-based hash verification
+   - getEntityHashes(): Partition by entityName and first character of entityId
+   - checkContentHashes(): Local vs. remote hash comparison
+
+### WebSocket Communication
+7. /home/user/Trilium/apps/server/src/services/ws.ts (265 lines)
+   - WebSocket initialization and message handling
+   - Entity ordering for frontend (referential dependencies)
+   - Entity enrichment: fillInAdditionalProperties()
+   - Message broadcasting: sync-pull-in-progress, sync-finished, etc.
+
+### API Routes
+8. /home/user/Trilium/apps/server/src/routes/api/sync.ts (341 lines)
+   - Endpoints: getChanged (GET), update (PUT), checkSync, syncFinished
+   - Paginated request handling (pageCount, pageIndex, requestId)
+   - Entity record generation with ~1MB size limit
+
+9. /home/user/Trilium/apps/server/src/routes/api/login.ts (150+ lines)
+   - POST /api/login/sync: HMAC-SHA256 authentication
+   - Timestamp validation: ±5 minutes
+   - Sync version checking
+
+10. /home/user/Trilium/apps/server/src/routes/routes.ts (370+ lines)
+    - Route registration for all sync endpoints
+    - Authentication middleware: auth.checkApiAuth
+
+### Entity Hash Generation
+11. /home/user/Trilium/apps/server/src/becca/entities/abstract_becca_entity.ts (250+ lines)
+    - generateHash(): Property concatenation + SHA256
+    - _setContent(): Blob management with hash-based IDs
+    - Protected content prefix: "t$[nvQg7q)&_ENCRYPTED_?M:Bf&j3jr_"
+
+### Client-Side Sync
+12. /home/user/Trilium/apps/client/src/services/sync.ts (31 lines)
+    - Client sync trigger: syncNow() API call
+    - Result handling: success/error messages
+
+### Database Schema
+13. /home/user/Trilium/apps/server/src/assets/db/schema.sql (155+ lines)
+    - entity_changes table structure (autoincrement id, unique index)
+    - options table: sync configuration storage
+    - Entity tables: notes, branches, attributes, revisions, attachments, blobs
+
+### Instance and Component IDs
+14. /home/user/Trilium/apps/server/src/services/instance_id.ts (6 lines)
+    - One-time 12-char random generation per server startup
+
+---
+
+## KEY FINDINGS SUMMARY
+
+### 1. SYNC PROTOCOL FLOW
+   Push (1st) → Pull → Push (2nd) → Finished → Hash Check
+   └─ If hash mismatch → Queue sector → Loop back
+
+### 2. CONFLICT RESOLUTION
+   Timestamp-based, Last-Writer-Wins (LWW) with deterministic tie-breaking
+   - Remote timestamp > Local timestamp → Apply remote
+   - Remote timestamp == Local timestamp → Apply remote (deterministic)
+   - Remote timestamp < Local timestamp → Keep local, re-queue for push
+
+### 3. ENTITY CHANGE TRACKING
+   - Hash: SHA256 of concatenated properties (first 10 chars)
+   - Sector: First character of entityId (enables localized recovery)
+   - Change ID: 12-char random (idempotency token)
+   - Instance ID: Source server identifier
+
+### 4. AUTHENTICATION
+   - HMAC-SHA256(documentSecret, ISO8601 timestamp)
+   - No persistent tokens
+   - Timestamp tolerance: ±5 minutes
+   - Sync version compatibility check
+
+### 5. WEBSOCKET UPDATES
+   - Transaction-based: CLS collects changes, broadcast on commit
+   - Entity ordering: Respects referential dependencies
+   - Entity enrichment: Adds data frontend needs (protected content decryption, positions)
+
+### 6. PERFORMANCE OPTIMIZATIONS
+   - Batching: 1000 changes per request
+   - Pagination: ~1MB per request
+   - Sectored verification: O(alphabet size) instead of O(entity count)
+   - Content-addressable storage: Hash-based blob IDs prevent duplicates
+
+### 7. SECURITY FEATURES
+   - No plaintext password transmission
+   - Per-entity encryption with deterministic hash
+   - Protected content prefix prevents information leakage
+   - Instance identity prevents self-sync
+   - Idempotency tokens prevent duplicate application
+
+---
+
+## CRITICAL ALGORITHMS
+
+1. **Timestamp Comparison** (sync_update.ts line 76)
+   localECIsOlderOrSameAsRemote = localEC.utcDateChanged <= remoteEC.utcDateChanged
+
+2. **Sector Hashing** (content_hash.ts)
+   sector = entityId[0]  // First character
+   hash(concatenate all entity hashes in sector + isErased flags)
+
+3. **Entity Change Filtering** (sync.ts line 215)
+   filter out if instanceId == currentInstanceId (prevent echo)
+
+4. **Hash Calculation** (abstract_becca_entity.ts line 68)
+   hash = SHA256("|P1|P2|...|Pn" + ["|deleted"]).substr(0, 10)
+
+5. **Entity Ordering** (ws.ts line 203)
+   sort(a, b) => ORDERING[a.entityName] - ORDERING[b.entityName]
+
+---
+
+## ENTITY DEPENDENCIES (ORDERING)
+
+Level 0: etapi_tokens, options, blobs (no dependencies)
+Level 1: notes (may reference blobs)
+Level 2: branches, attributes, note_reordering, revisions (reference notes)
+Level 3: attachments (reference notes and blobs)
+
+---
+
+## SYNC STATE OPTIONS
+
+Option Name          | Type        | Example Value
+lastSyncedPull      | Integer     | 2500
+lastSyncedPush      | Integer     | 2450
+documentSecret      | String      | SHA256 hash
+documentId          | String      | UUID
+syncServerHost      | URL         | https://trilium.example.com
+syncServerTimeout   | Integer ms  | 120000
+syncProxy           | String      | http://proxy:8080
+syncVersion         | Integer     | 34
+
+---
+
+## API ENDPOINT SUMMARY
+
+Authentication:
+  POST /api/login/sync                           → { instanceId, maxEntityChangeId }
+
+Data Sync:
+  GET  /api/sync/changed                         → { entityChanges[], lastEntityChangeId, outstandingPullCount }
+  PUT  /api/sync/update                          → Success/Error
+  POST /api/sync/finished                        → Success/Error
+
+Verification:
+  GET  /api/sync/check                           → { entityHashes, maxEntityChangeId }
+  POST /api/sync/check-entity-changes            → Run consistency checks
+  POST /api/sync/queue-sector/:entityName/:sector → Re-queue sector
+
+Management:
+  POST /api/sync/test                            → Test configuration
+  POST /api/sync/now                             → Trigger sync immediately
+  POST /api/sync/force-full-sync                 → Reset sync state
+  POST /api/sync/fill-entity-changes             → Populate entity_changes
+  GET  /api/sync/stats                           → { initialized, outstandingPullCount }
+
+---
+
+## DATAFLOW DIAGRAM
+
+  Client A                          Sync Server                        Client B
+     │                                  │                                  │
+     │── (1) Login HMAC ────────────→   │                                  │
+     │← Instance ID, maxChangeId ──     │                                  │
+     │                                  │                                  │
+     │── (2) Push changes 1-100 ─────→  │── Sync from C1 ──→              │
+     │                                  │                                  │
+     │← (3) Pull changes 101-200 ──     │                    (3) Pull ←─   │
+     │                                  │                                  │
+     │── (4) Push triggered by pull     │                                  │
+     │                                  │                                  │
+     │── (5) Sync finished ────────→    │                                  │
+     │                                  │                                  │
+     │← (6) Hash check results ─────    │                                  │
+     │   (If all match → Complete)      │                                  │
+     │   (If mismatch → Re-queue sector)│                                  │
+
+---
+
+## IDEMPOTENCY AND DEDUPLICATION
+
+Change ID: 12-char random string
+- Checked before applying pulled changes
+- Prevents duplicate application of same change
+- Works across retries: same changeId = same change
+
+Instance ID: 12-char random per server startup
+- Prevents applying your own echoed changes
+- Enables multi-master sync (any instance can be sync server)
+
+Sector: First character of entityId
+- Enables recovery of partial failures
+- 36 possible sectors (0-9, a-z)
+- Can resync entire sector without full resync
+
+---
+
+## CONCLUSION
+
+Trilium's sync system is a sophisticated, production-grade implementation featuring:
+
+✓ Last-Writer-Wins conflict resolution with deterministic tie-breaking
+✓ Timestamp-based ordering (not vector clocks or operation transforms)
+✓ Content-addressable storage (hash-based blob IDs)
+✓ Sectored verification enabling localized consistency recovery
+✓ HMAC-based stateless authentication
+✓ Protected content encryption with deterministic hashing
+✓ Dual-push architecture preventing sync deadlocks
+✓ Referential ordering preventing foreign key violations
+✓ WebSocket-based real-time propagation
+✓ Mutex-protected exclusive sync cycles
+
+The system handles offline scenarios, clock skew, concurrent edits, and network failures gracefully while maintaining data consistency across multiple instances.
+
