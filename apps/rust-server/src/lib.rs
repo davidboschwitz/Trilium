@@ -6,4 +6,4 @@ pub mod routes;
 
 // Re-export commonly used types
 pub use db::Database;
-pub use entities::{Note, Branch, Attribute};
+pub use entities::{Note, Branch, Attribute, Blob};

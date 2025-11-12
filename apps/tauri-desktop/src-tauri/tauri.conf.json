@@ -5,8 +5,8 @@
   "identifier": "org.triliumnext.trilium",
   "build": {
     "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "devUrl": "http://localhost:8080",
+    "beforeBuildCommand": "cd ../../rust-server && cargo build --release",
+    "devUrl": "http://localhost:8081",
     "frontendDist": "../dist"
   },
   "bundle": {
@@ -20,7 +20,9 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "externalBin": [],
+    "externalBin": [
+      "binaries/trilium-rust"
+    ],
     "copyright": "AGPL-3.0-only",
     "category": "Productivity",
     "shortDescription": "Build your personal knowledge base with Trilium Notes",
@@ -56,7 +58,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:8080 ws://localhost:8080 data: blob:"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:8081 ws://localhost:8081 http://localhost:8080 ws://localhost:8080 data: blob:"
     },
     "withGlobalTauri": true
   },
